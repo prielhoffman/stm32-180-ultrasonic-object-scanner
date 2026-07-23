@@ -57,6 +57,11 @@ const osThreadAttr_t UartTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 256 * 4
 };
+/* Definitions for ledStateQueue */
+osMessageQueueId_t ledStateQueueHandle;
+const osMessageQueueAttr_t ledStateQueue_attributes = {
+  .name = "ledStateQueue"
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -125,6 +130,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of ledStateQueue */
+  ledStateQueueHandle = osMessageQueueNew (5, sizeof(uint8_t), &ledStateQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -295,10 +304,19 @@ static void MX_GPIO_Init(void)
 void StartLedTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
+  uint8_t led_state;
   /* Infinite loop */
   for(;;)
   {
 	HAL_GPIO_TogglePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin);
+	if (HAL_GPIO_ReadPin(LED_GREEN_GPIO_Port, LED_GREEN_Pin) == GPIO_PIN_SET){
+		led_state = 1U;
+	}
+	else{
+		led_state = 0U;
+	}
+    osMessageQueuePut(ledStateQueueHandle, &led_state, 0U, osWaitForever
+    );
 	osDelay(500);
   }
   /* USER CODE END 5 */
@@ -315,12 +333,22 @@ void StartUartTask(void *argument)
 {
   /* USER CODE BEGIN StartUartTask */
   /* Infinite loop */
-  const uint8_t message[] = "UartTask is running\r\n";
+  uint8_t received_led_state;
+
+  const uint8_t led_on_msg[] = "LED is ON\r\n";
+  const uint8_t led_off_msg[] = "LED is OFF\r\n";
 
   for(;;)
   {
-	HAL_UART_Transmit(&huart2, (uint8_t *)message, sizeof(message) - 1, HAL_MAX_DELAY);
-    osDelay(1000);
+	osStatus_t status = osMessageQueueGet(ledStateQueueHandle, &received_led_state, NULL, osWaitForever);
+	if (status == osOK){
+		if (received_led_state == 1U){
+			HAL_UART_Transmit(&huart2, (uint8_t *)led_on_msg, sizeof(led_on_msg) - 1U, 100U);
+		}
+		else{
+			HAL_UART_Transmit(&huart2, (uint8_t *)led_off_msg, sizeof(led_off_msg) - 1U, 100U);
+		}
+	}
   }
   /* USER CODE END StartUartTask */
 }
