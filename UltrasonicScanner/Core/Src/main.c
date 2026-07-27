@@ -100,12 +100,20 @@ int main(void)
       /* USER CODE END WHILE */
 
       /* USER CODE BEGIN 3 */
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
       HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-      HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_10);
 
-      char msg[] = "Green LEDs Test OK\r\n";
-      HAL_UART_Transmit(&huart2, (uint8_t*)msg, sizeof(msg) - 1, HAL_MAX_DELAY);
+      char msg1[] = "STATUS: Green ON, Red OFF\r\n";
+      HAL_UART_Transmit(&huart2, (uint8_t*)msg1, sizeof(msg1) - 1, HAL_MAX_DELAY);
+      HAL_Delay(1000);
 
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+      HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+
+      char msg2[] = "STATUS: Red ON, Green OFF\r\n";
+      HAL_UART_Transmit(&huart2, (uint8_t*)msg2, sizeof(msg2) - 1, HAL_MAX_DELAY);
       HAL_Delay(1000);
     }
     /* USER CODE END 3 */
@@ -219,9 +227,13 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|GPIO_PIN_10, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LED_GREEN_Pin */
   GPIO_InitStruct.Pin = LED_GREEN_Pin;
@@ -236,6 +248,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
