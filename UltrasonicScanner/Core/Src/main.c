@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +40,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
@@ -53,12 +54,23 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static void DelayUs(uint16_t microseconds)
+{
+    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+
+    while (__HAL_TIM_GET_COUNTER(&htim2) < microseconds)
+    {
+        /* Wait */
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -93,33 +105,114 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_TIM3_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIM_Base_Start(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    while (1)
-    {
-      /* USER CODE END WHILE */
+  while (1)
+  {
+      uint32_t echoPulseUs;
+      uint32_t waitStartMs;
+      uint16_t distanceCm;
 
-      /* USER CODE BEGIN 3 */
-      TIM3->CCR1 = 1000;
-      char msg1[] = "Servo: 0 Degrees\r\n";
-      HAL_UART_Transmit(&huart2, (uint8_t*)msg1, sizeof(msg1) - 1, HAL_MAX_DELAY);
-      HAL_Delay(1500);
+      char uartBuf[80];
+      int len;
 
-      TIM3->CCR1 = 1500;
-      char msg2[] = "Servo: 90 Degrees\r\n";
-      HAL_UART_Transmit(&huart2, (uint8_t*)msg2, sizeof(msg2) - 1, HAL_MAX_DELAY);
-      HAL_Delay(1500);
+      /*
+       * Ensure that TRIG starts LOW.
+       */
+      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
+      DelayUs(2U);
 
-      TIM3->CCR1 = 2000;
-      char msg3[] = "Servo: 180 Degrees\r\n";
-      HAL_UART_Transmit(&huart2, (uint8_t*)msg3, sizeof(msg3) - 1, HAL_MAX_DELAY);
-      HAL_Delay(1500);
-    }
-    /* USER CODE END 3 */
+      /*
+       * Generate the 10 us trigger pulse required by the HC-SR04.
+       */
+      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_SET);
+      DelayUs(10U);
+      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
+
+      /*
+       * Wait for ECHO to rise.
+       * The timeout prevents the program from getting stuck
+       * if the sensor does not respond.
+       */
+      waitStartMs = HAL_GetTick();
+
+      while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_RESET)
+      {
+          if ((HAL_GetTick() - waitStartMs) >= 50U)
+          {
+              break;
+          }
+      }
+
+      if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_RESET)
+      {
+          len = snprintf(
+              uartBuf,
+              sizeof(uartBuf),
+              "ERROR: Echo never went HIGH\r\n"
+          );
+      }
+      else
+      {
+          /*
+           * ECHO is now HIGH.
+           * Reset TIM2 and use it to measure the HIGH pulse width.
+           */
+          __HAL_TIM_SET_COUNTER(&htim2, 0U);
+          waitStartMs = HAL_GetTick();
+
+          while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_SET)
+          {
+              if ((HAL_GetTick() - waitStartMs) >= 50U)
+              {
+                  break;
+              }
+          }
+
+          if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_SET)
+          {
+              len = snprintf(
+                  uartBuf,
+                  sizeof(uartBuf),
+                  "ERROR: Echo remained HIGH\r\n"
+              );
+          }
+          else
+          {
+              echoPulseUs = __HAL_TIM_GET_COUNTER(&htim2);
+
+              /*
+               * HC-SR04 distance conversion:
+               * distance in cm is approximately pulse duration / 58.
+               */
+              distanceCm = (uint16_t)(echoPulseUs / 58U);
+
+              len = snprintf(
+                  uartBuf,
+                  sizeof(uartBuf),
+                  "Pulse: %lu us | Distance: %u cm\r\n",
+                  (unsigned long)echoPulseUs,
+                  distanceCm
+              );
+          }
+      }
+
+      HAL_UART_Transmit(
+          &huart2,
+          (uint8_t *)uartBuf,
+          (uint16_t)len,
+          100U
+      );
+
+      HAL_Delay(300U);
+  }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -166,6 +259,51 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 63;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65535;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
 }
 
 /**
@@ -292,10 +430,16 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|GPIO_PIN_10, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|TRIG_Pin|GPIO_PIN_10, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : ECHO_Pin */
+  GPIO_InitStruct.Pin = ECHO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ECHO_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_GREEN_Pin */
   GPIO_InitStruct.Pin = LED_GREEN_Pin;
@@ -304,8 +448,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(LED_GREEN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  /*Configure GPIO pins : TRIG_Pin PA10 */
+  GPIO_InitStruct.Pin = TRIG_Pin|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
