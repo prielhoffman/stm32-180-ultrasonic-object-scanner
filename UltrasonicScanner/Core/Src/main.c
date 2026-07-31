@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "lcd_i2c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,13 +41,15 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+LCD_I2C_HandleTypeDef lcd;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,6 +58,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -62,13 +66,78 @@ static void MX_TIM2_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static void DelayUs(uint16_t microseconds)
+static void I2C_Scan(void)
 {
-    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+    char uartBuf[64];
+    uint8_t devicesFound = 0U;
 
-    while (__HAL_TIM_GET_COUNTER(&htim2) < microseconds)
+    const char startMessage[] = "\r\nStarting I2C scan...\r\n";
+
+    HAL_UART_Transmit(
+        &huart2,
+        (uint8_t *)startMessage,
+        sizeof(startMessage) - 1U,
+        100U
+    );
+
+    for (uint8_t address = 1U; address < 128U; address++)
     {
-        /* Wait */
+        /*
+         * STM32 HAL expects the 7-bit I2C address shifted left by one bit.
+         */
+        HAL_StatusTypeDef status = HAL_I2C_IsDeviceReady(
+            &hi2c1,
+            (uint16_t)(address << 1U),
+            2U,
+            10U
+        );
+
+        if (status == HAL_OK)
+        {
+            int length = snprintf(
+                uartBuf,
+                sizeof(uartBuf),
+                "I2C device found at 0x%02X\r\n",
+                address
+            );
+
+            HAL_UART_Transmit(
+                &huart2,
+                (uint8_t *)uartBuf,
+                (uint16_t)length,
+                100U
+            );
+
+            devicesFound++;
+        }
+    }
+
+    if (devicesFound == 0U)
+    {
+        const char noDeviceMessage[] = "No I2C devices found\r\n";
+
+        HAL_UART_Transmit(
+            &huart2,
+            (uint8_t *)noDeviceMessage,
+            sizeof(noDeviceMessage) - 1U,
+            100U
+        );
+    }
+    else
+    {
+        int length = snprintf(
+            uartBuf,
+            sizeof(uartBuf),
+            "Scan complete: %u device(s) found\r\n",
+            devicesFound
+        );
+
+        HAL_UART_Transmit(
+            &huart2,
+            (uint8_t *)uartBuf,
+            (uint16_t)length,
+            100U
+        );
     }
 }
 
@@ -106,111 +175,27 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM3_Init();
   MX_TIM2_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   HAL_TIM_Base_Start(&htim2);
+
+  HAL_Delay(100U);
+  I2C_Scan();
+
+  LCD_I2C_Init(&lcd, &hi2c1, 0x27U);
+  LCD_I2C_Print(&lcd, "HELLO");
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      uint32_t echoPulseUs;
-      uint32_t waitStartMs;
-      uint16_t distanceCm;
+    /* USER CODE END WHILE */
 
-      char uartBuf[80];
-      int len;
-
-      /*
-       * Ensure that TRIG starts LOW.
-       */
-      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
-      DelayUs(2U);
-
-      /*
-       * Generate the 10 us trigger pulse required by the HC-SR04.
-       */
-      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_SET);
-      DelayUs(10U);
-      HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
-
-      /*
-       * Wait for ECHO to rise.
-       * The timeout prevents the program from getting stuck
-       * if the sensor does not respond.
-       */
-      waitStartMs = HAL_GetTick();
-
-      while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_RESET)
-      {
-          if ((HAL_GetTick() - waitStartMs) >= 50U)
-          {
-              break;
-          }
-      }
-
-      if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_RESET)
-      {
-          len = snprintf(
-              uartBuf,
-              sizeof(uartBuf),
-              "ERROR: Echo never went HIGH\r\n"
-          );
-      }
-      else
-      {
-          /*
-           * ECHO is now HIGH.
-           * Reset TIM2 and use it to measure the HIGH pulse width.
-           */
-          __HAL_TIM_SET_COUNTER(&htim2, 0U);
-          waitStartMs = HAL_GetTick();
-
-          while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_SET)
-          {
-              if ((HAL_GetTick() - waitStartMs) >= 50U)
-              {
-                  break;
-              }
-          }
-
-          if (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_SET)
-          {
-              len = snprintf(
-                  uartBuf,
-                  sizeof(uartBuf),
-                  "ERROR: Echo remained HIGH\r\n"
-              );
-          }
-          else
-          {
-              echoPulseUs = __HAL_TIM_GET_COUNTER(&htim2);
-
-              /*
-               * HC-SR04 distance conversion:
-               * distance in cm is approximately pulse duration / 58.
-               */
-              distanceCm = (uint16_t)(echoPulseUs / 58U);
-
-              len = snprintf(
-                  uartBuf,
-                  sizeof(uartBuf),
-                  "Pulse: %lu us | Distance: %u cm\r\n",
-                  (unsigned long)echoPulseUs,
-                  distanceCm
-              );
-          }
-      }
-
-      HAL_UART_Transmit(
-          &huart2,
-          (uint8_t *)uartBuf,
-          (uint16_t)len,
-          100U
-      );
-
-      HAL_Delay(300U);
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -259,6 +244,54 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x10B17DB5;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -430,10 +463,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|TRIG_Pin|GPIO_PIN_10, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|TRIG_Pin|LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : ECHO_Pin */
   GPIO_InitStruct.Pin = ECHO_Pin;
@@ -448,19 +481,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(LED_GREEN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : TRIG_Pin PA10 */
-  GPIO_InitStruct.Pin = TRIG_Pin|GPIO_PIN_10;
+  /*Configure GPIO pins : TRIG_Pin LED_GREEN_EXT_Pin */
+  GPIO_InitStruct.Pin = TRIG_Pin|LED_GREEN_EXT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  /*Configure GPIO pin : LED_RED_EXT_Pin */
+  GPIO_InitStruct.Pin = LED_RED_EXT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(LED_RED_EXT_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
