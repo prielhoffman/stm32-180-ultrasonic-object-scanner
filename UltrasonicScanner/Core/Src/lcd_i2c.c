@@ -213,3 +213,44 @@ HAL_StatusTypeDef LCD_I2C_Print(LCD_I2C_HandleTypeDef *lcd, const char *text){
 
     return HAL_OK;
 }
+
+
+HAL_StatusTypeDef LCD_I2C_SetCursor(LCD_I2C_HandleTypeDef *lcd, uint8_t row, uint8_t column){
+    uint8_t ddramAddress;
+    uint8_t command;
+
+    if ((lcd == NULL) || (row > 1U) || (column > 15U)){
+        return HAL_ERROR;
+    }
+
+    if (row == 0U){
+        ddramAddress = column;
+    }
+    else{
+        ddramAddress = (uint8_t)(0x40U + column);
+    }
+
+    command = (uint8_t)(0x80U | ddramAddress);
+
+    return LCD_I2C_SendCommand(lcd, command);
+}
+
+
+HAL_StatusTypeDef LCD_I2C_Clear(LCD_I2C_HandleTypeDef *lcd){
+    HAL_StatusTypeDef status;
+
+    if (lcd == NULL){
+        return HAL_ERROR;
+    }
+
+    status = LCD_I2C_SendCommand(lcd, LCD_CLEAR_DISPLAY);
+
+    if (status != HAL_OK){
+        return status;
+    }
+
+    /* Clear Display takes longer than most LCD commands */
+    HAL_Delay(2U);
+
+    return HAL_OK;
+}

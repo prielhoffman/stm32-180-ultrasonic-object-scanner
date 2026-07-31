@@ -185,7 +185,21 @@ int main(void)
   I2C_Scan();
 
   LCD_I2C_Init(&lcd, &hi2c1, 0x27U);
-  LCD_I2C_Print(&lcd, "HELLO");
+  LCD_I2C_SetCursor(&lcd, 0U, 0U);
+
+  LCD_I2C_Print(&lcd, "LCD READY");
+
+  LCD_I2C_SetCursor(&lcd, 1U, 0U);
+
+  LCD_I2C_Print(&lcd, "I2C 0x27");
+
+  HAL_Delay(2000U);
+
+  LCD_I2C_Clear(&lcd);
+
+  LCD_I2C_SetCursor(&lcd, 0U, 0U);
+
+  LCD_I2C_Print(&lcd, "LCD TEST PASSED");
 
   /* USER CODE END 2 */
 
