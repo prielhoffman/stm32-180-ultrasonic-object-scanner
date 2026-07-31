@@ -32,7 +32,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define HC_SR04_TIMEOUT_US    30000U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,80 +66,104 @@ static void MX_I2C1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static void I2C_Scan(void)
-{
+static void I2C_Scan(void){
     char uartBuf[64];
     uint8_t devicesFound = 0U;
 
     const char startMessage[] = "\r\nStarting I2C scan...\r\n";
 
-    HAL_UART_Transmit(
-        &huart2,
-        (uint8_t *)startMessage,
-        sizeof(startMessage) - 1U,
-        100U
-    );
+    HAL_UART_Transmit(&huart2, (uint8_t *)startMessage, sizeof(startMessage) - 1U, 100U);
 
-    for (uint8_t address = 1U; address < 128U; address++)
-    {
-        /*
-         * STM32 HAL expects the 7-bit I2C address shifted left by one bit.
-         */
-        HAL_StatusTypeDef status = HAL_I2C_IsDeviceReady(
-            &hi2c1,
-            (uint16_t)(address << 1U),
-            2U,
-            10U
-        );
+    for (uint8_t address = 1U; address < 128U; address++){
+        /* STM32 HAL expects the 7-bit I2C address shifted left by one bit */
+        HAL_StatusTypeDef status = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(address << 1U), 2U, 10U);
 
-        if (status == HAL_OK)
-        {
-            int length = snprintf(
-                uartBuf,
-                sizeof(uartBuf),
-                "I2C device found at 0x%02X\r\n",
-                address
-            );
+        if (status == HAL_OK){
+            int length = snprintf(uartBuf, sizeof(uartBuf), "I2C device found at 0x%02X\r\n", address);
 
-            HAL_UART_Transmit(
-                &huart2,
-                (uint8_t *)uartBuf,
-                (uint16_t)length,
-                100U
-            );
+            HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
 
             devicesFound++;
         }
     }
 
-    if (devicesFound == 0U)
-    {
+    if (devicesFound == 0U){
         const char noDeviceMessage[] = "No I2C devices found\r\n";
 
-        HAL_UART_Transmit(
-            &huart2,
-            (uint8_t *)noDeviceMessage,
-            sizeof(noDeviceMessage) - 1U,
-            100U
-        );
+        HAL_UART_Transmit(&huart2, (uint8_t *)noDeviceMessage, sizeof(noDeviceMessage) - 1U, 100U);
     }
-    else
-    {
-        int length = snprintf(
-            uartBuf,
-            sizeof(uartBuf),
-            "Scan complete: %u device(s) found\r\n",
-            devicesFound
-        );
+    else{
+        int length = snprintf(uartBuf, sizeof(uartBuf), "Scan complete: %u device(s) found\r\n", devicesFound);
 
-        HAL_UART_Transmit(
-            &huart2,
-            (uint8_t *)uartBuf,
-            (uint16_t)length,
-            100U
-        );
+        HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
     }
 }
+
+static void DelayUs(uint16_t delayUs){
+    /* Start counting again from zero */
+    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+
+    /* TIM2 advances once every microsecond, stay here until the requested time has elapsed */
+    while (__HAL_TIM_GET_COUNTER(&htim2) < delayUs){
+        /* Busy wait */
+    }
+}
+
+static uint32_t HC_SR04_ReadEchoPulseUs(void){
+    /* Ensure TRIG starts LOW */
+    HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
+
+    DelayUs(2U);
+
+    /* Send a 10 us trigger pulse */
+    HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_SET);
+
+    DelayUs(10U);
+
+    HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
+
+    /* Wait for ECHO to rise */
+    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+
+    while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_RESET){
+        if (__HAL_TIM_GET_COUNTER(&htim2) >= HC_SR04_TIMEOUT_US){
+            return 0U;
+        }
+    }
+
+    /* ECHO is now HIGH, start measuring its pulse width */
+    __HAL_TIM_SET_COUNTER(&htim2, 0U);
+
+    while (HAL_GPIO_ReadPin(ECHO_GPIO_Port, ECHO_Pin) == GPIO_PIN_SET){
+        if (__HAL_TIM_GET_COUNTER(&htim2) >= HC_SR04_TIMEOUT_US){
+            return 0U;
+        }
+    }
+
+    /* TIM2 counts once per microsecond */
+    return __HAL_TIM_GET_COUNTER(&htim2);
+}
+
+
+static void Servo_SetAngle(uint8_t angle){
+    uint32_t pulseUs;
+
+    /* Protect the servo from receiving an angle outside the supported 0-180 degree range */
+    if (angle > 180U){
+        angle = 180U;
+    }
+
+    /*
+     * Map:
+     *   0 degrees   -> 1000 us
+     *   90 degrees  -> 1500 us
+     *   180 degrees -> 2000 us
+     */
+    pulseUs = 1000U + (((uint32_t)angle * 1000U) / 180U);
+
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulseUs);
+}
+
 
 /* USER CODE END 0 */
 
@@ -178,7 +202,9 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
+  Servo_SetAngle(90U);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+
   HAL_TIM_Base_Start(&htim2);
 
   HAL_Delay(100U);
@@ -207,8 +233,38 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+	  const uint8_t testAngles[] = {60U, 90U, 120U};
 
+	  for (uint8_t i = 0U; i < 3U; i++){
+	      uint8_t angle;
+	      uint32_t echoPulseUs;
+	      uint32_t distanceCm;
+	      char uartBuf[80];
+	      int length;
+
+	      angle = testAngles[i];
+
+	      /* Move the ultrasonic sensor to the requested angle */
+	      Servo_SetAngle(angle);
+
+	      /* Allow the servo and sensor mount to stop moving before taking a measurement */
+	      HAL_Delay(700U);
+
+	      echoPulseUs = HC_SR04_ReadEchoPulseUs();
+
+	      if (echoPulseUs == 0U){
+	          length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %u deg | HC-SR04 timeout\r\n", angle);
+	      }
+	      else{
+	          distanceCm = echoPulseUs / 58U;
+
+	          length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %u deg | Distance: %lu cm\r\n", angle, (unsigned long)distanceCm);
+	      }
+
+	      HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+	  }
+
+	  HAL_Delay(1000U);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
