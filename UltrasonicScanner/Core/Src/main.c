@@ -50,6 +50,9 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 LCD_I2C_HandleTypeDef lcd;
+
+static int16_t scanAngle = 90;
+static int8_t scanDirection = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -233,39 +236,57 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  const uint8_t testAngles[] = {60U, 90U, 120U};
+      /* USER CODE END WHILE */
 
-	  for (uint8_t i = 0U; i < 3U; i++){
-	      uint8_t angle;
-	      uint32_t echoPulseUs;
-	      uint32_t distanceCm;
-	      char uartBuf[80];
-	      int length;
+      /* USER CODE BEGIN 3 */
 
-	      angle = testAngles[i];
+      /* Move the servo by one small step */
+      Servo_SetAngle((uint8_t)scanAngle);
 
-	      /* Move the ultrasonic sensor to the requested angle */
-	      Servo_SetAngle(angle);
+      /* Give the servo one PWM period to begin moving toward the requested angle */
+      HAL_Delay(20U);
 
-	      /* Allow the servo and sensor mount to stop moving before taking a measurement */
-	      HAL_Delay(700U);
+      /* Measure only every three degrees, the servo still moves in one-degree steps */
+      if ((scanAngle % 3) == 0){
+          uint32_t echoPulseUs;
+          uint32_t distanceCm;
+          char uartBuf[80];
+          int length;
 
-	      echoPulseUs = HC_SR04_ReadEchoPulseUs();
+          echoPulseUs = HC_SR04_ReadEchoPulseUs();
 
-	      if (echoPulseUs == 0U){
-	          length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %u deg | HC-SR04 timeout\r\n", angle);
-	      }
-	      else{
-	          distanceCm = echoPulseUs / 58U;
+          if (echoPulseUs == 0U){
+              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | HC-SR04 timeout\r\n", (int)scanAngle);
+          }
+          else{
+              distanceCm = echoPulseUs / 58U;
 
-	          length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %u deg | Distance: %lu cm\r\n", angle, (unsigned long)distanceCm);
-	      }
+              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | Distance: %lu cm\r\n", (int)scanAngle, (unsigned long)distanceCm);
+          }
 
-	      HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
-	  }
+          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U
+          );
+      }
 
-	  HAL_Delay(1000U);
-    /* USER CODE BEGIN 3 */
+      /* Calculate the next angle without repeating the endpoint twice */
+      if (scanDirection > 0){
+          if (scanAngle >= 170){
+              scanDirection = -1;
+              scanAngle--;
+          }
+          else{
+              scanAngle++;
+          }
+      }
+      else{
+          if (scanAngle <= 10){
+              scanDirection = 1;
+              scanAngle++;
+          }
+          else{
+              scanAngle--;
+          }
+      }
   }
   /* USER CODE END 3 */
 }
