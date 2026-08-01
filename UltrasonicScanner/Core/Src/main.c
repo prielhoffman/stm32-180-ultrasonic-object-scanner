@@ -695,7 +695,6 @@ static void MX_GPIO_Init(void)
 /* USER CODE END Header_StartScannerTask */
 void StartScannerTask(void *argument){
   /* USER CODE BEGIN 5 */
-
   for (;;){
       ScanMessage_t message;
       uint32_t echoPulseUs;
@@ -832,18 +831,17 @@ void StartDisplayTask(void *argument){
       if (osMessageQueueGet(ScanDataQueueHandle, &message, NULL, osWaitForever) == osOK){
           if (message.state == SYSTEM_STATE_SCANNING){
               /* Exactly 16 visible characters */
-              (void)snprintf(line1, sizeof(line1), "AREA CLEAR      ");
-
-              (void)snprintf(line2, sizeof(line2), "ANGLE:%3u deg   ", (unsigned int)message.angleDeg);
+        	  (void)snprintf(line1, sizeof(line1), "AREA CLEAR      ");
+        	  (void)snprintf(line2, sizeof(line2), "ANGLE:%3u deg   ", (unsigned int)message.angleDeg);
           }
           else if (message.state == SYSTEM_STATE_DETECTED){
-              (void)snprintf(line1, sizeof(line1), "FOREIGN BODY     ");
+              (void)snprintf(line1, sizeof(line1), "FOREIGN BODY    ");
 
               if (message.measurementValid != 0U){
-                  (void)snprintf(line2, sizeof(line2), "A:%3u D:%3ucm  ", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
+                  (void)snprintf(line2, sizeof(line2), "A:%3u D:%3ucm   ", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
               }
               else{
-                  (void)snprintf(line2, sizeof(line2), "A:%3u D:---cm  ", (unsigned int)message.angleDeg);
+                  (void)snprintf(line2, sizeof(line2), "A:%3u D:---cm   ", (unsigned int)message.angleDeg);
               }
           }
           else{
