@@ -52,6 +52,16 @@ typedef struct{
 
 #define DETECT_CONFIRM_SAMPLES        2U
 #define RELEASE_CONFIRM_SAMPLES       3U
+
+#define BUZZER_TASK_PERIOD_TICKS      10U
+#define BUZZER_ON_TIME_TICKS          60U
+
+#define BUZZER_GAP_NEAR_TICKS        100U
+#define BUZZER_GAP_MEDIUM_TICKS      300U
+#define BUZZER_GAP_FAR_TICKS         700U
+
+#define BUZZER_NEAR_DISTANCE_CM       10U
+#define BUZZER_MEDIUM_DISTANCE_CM     17U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -245,6 +255,18 @@ static void Scanner_AdvanceAngle(void){
             scanAngle--;
         }
     }
+}
+
+static uint32_t Alert_GetBuzzerGapTicks(uint16_t distanceCm){
+    if (distanceCm <= BUZZER_NEAR_DISTANCE_CM){
+        return BUZZER_GAP_NEAR_TICKS;
+    }
+
+    if (distanceCm <= BUZZER_MEDIUM_DISTANCE_CM){
+        return BUZZER_GAP_MEDIUM_TICKS;
+    }
+
+    return BUZZER_GAP_FAR_TICKS;
 }
 
 /* USER CODE END 0 */
@@ -865,44 +887,123 @@ void StartDisplayTask(void *argument){
 * @retval None
 */
 /* USER CODE END Header_StartAlertTask */
-void StartAlertTask(void *argument){
+void StartAlertTask(void *argument)
+{
   /* USER CODE BEGIN StartAlertTask */
 
   ScanMessage_t message;
 
-  /* Start in a safe and quiet state. */
-  HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
+  SystemState_t currentState = SYSTEM_STATE_STARTUP;
 
-  HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
+  uint16_t currentDistanceCm = 0U;
+  uint8_t currentMeasurementValid = 0U;
 
-  HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+  uint8_t buzzerIsOn = 0U;
+  uint32_t nextBuzzerChangeTick = 0U;
 
-  for (;;){
-      /* Wait without consuming CPU time until ScannerTask sends a new system snapshot */
-      if (osMessageQueueGet(AlertDataQueueHandle, &message, NULL, osWaitForever) == osOK){
-          if (message.state == SYSTEM_STATE_SCANNING){
+  /*
+   * Begin with every alert output disabled.
+   */
+  HAL_GPIO_WritePin(
+      LED_GREEN_EXT_GPIO_Port,
+      LED_GREEN_EXT_Pin,
+      GPIO_PIN_RESET
+  );
+
+  HAL_GPIO_WritePin(
+      LED_RED_EXT_GPIO_Port,
+      LED_RED_EXT_Pin,
+      GPIO_PIN_RESET
+  );
+
+  HAL_GPIO_WritePin(
+      BUZZER_CTRL_GPIO_Port,
+      BUZZER_CTRL_Pin,
+      GPIO_PIN_RESET
+  );
+
+  for (;;)
+  {
+      osStatus_t queueStatus;
+      uint32_t currentTick;
+
+      /*
+       * Wait for a message, but only for 10 ticks.
+       *
+       * The finite timeout allows this task to wake up periodically
+       * and update the buzzer pattern even when no new queue message arrives.
+       */
+      queueStatus = osMessageQueueGet(AlertDataQueueHandle, &message, NULL, BUZZER_TASK_PERIOD_TICKS);
+
+      currentTick = osKernelGetTickCount();
+
+      if (queueStatus == osOK){
+          uint8_t enteredDetectedState;
+
+          enteredDetectedState = ((currentState != SYSTEM_STATE_DETECTED) && (message.state == SYSTEM_STATE_DETECTED)) ? 1U : 0U;
+
+          currentState = message.state;
+          currentDistanceCm = message.distanceCm;
+          currentMeasurementValid = message.measurementValid;
+
+          if (currentState == SYSTEM_STATE_SCANNING){
               HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_SET);
 
               HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
-
-              /* The buzzer must always be silent while the scanner is clear */
-              HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
           }
-          else if (message.state == SYSTEM_STATE_DETECTED){
+          else if (currentState == SYSTEM_STATE_DETECTED){
               HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
 
               HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_SET);
-
-              /* Buzzer behavior will be added separately after the LEDs are verified */
-              HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
           }
           else{
-              /* Safe output state for STARTUP or ERROR */
               HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
 
               HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
+          }
 
+          /*
+           * The buzzer is allowed to operate only when:
+           * 1. The system is in DETECTED
+           * 2. The latest measurement is valid
+           */
+          if ((currentState != SYSTEM_STATE_DETECTED) || (currentMeasurementValid == 0U)){
               HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+
+              buzzerIsOn = 0U;
+              nextBuzzerChangeTick = currentTick;
+          }
+          else if (enteredDetectedState != 0U){
+              /* Schedule the first beep immediately after entering DETECTED */
+              nextBuzzerChangeTick = currentTick;
+          }
+      }
+
+      /* Generate the buzzer pattern independently of the rate at which messages arrive */
+      if ((currentState == SYSTEM_STATE_DETECTED) && (currentMeasurementValid != 0U)){
+          /*
+           * Casting the subtraction to int32_t makes the comparison safe
+           * even when the RTOS tick counter eventually wraps around
+           */
+          if ((int32_t)(currentTick - nextBuzzerChangeTick) >= 0){
+              if (buzzerIsOn != 0U){
+                  uint32_t gapTicks;
+
+                  HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+
+                  buzzerIsOn = 0U;
+
+                  gapTicks = Alert_GetBuzzerGapTicks(currentDistanceCm);
+
+                  nextBuzzerChangeTick = currentTick + gapTicks;
+              }
+              else{
+                  HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_SET);
+
+                  buzzerIsOn = 1U;
+
+                  nextBuzzerChangeTick = currentTick + BUZZER_ON_TIME_TICKS;
+              }
           }
       }
   }
