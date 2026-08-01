@@ -694,20 +694,41 @@ void StartDisplayTask(void *argument){
   /* USER CODE BEGIN StartDisplayTask */
 
   ScanMessage_t message;
-  char uartBuf[80];
-  int length;
+
+  /*
+   * A 16x2 LCD displays 16 characters per row.
+   * The extra byte stores the terminating '\0'.
+   */
+  char line1[17];
+  char line2[17];
+
+  /*
+   * Remove the old LCD test message once,
+   * when the display task begins.
+   */
+  LCD_I2C_Clear(&lcd);
 
   for (;;){
-      /* Wait here until ScannerTask places a measurement in the queue */
+      /* Block this task until ScannerTask sends one complete measurement */
       if (osMessageQueueGet(ScanDataQueueHandle, &message, NULL, osWaitForever) == osOK){
+          /*Build exactly 16 visible characters */
+          (void)snprintf(line1, sizeof(line1), "SCAN A:%3u deg  ", (unsigned int)message.angleDeg);
+
           if (message.measurementValid == 0U){
-              length = snprintf(uartBuf, sizeof(uartBuf), "QUEUE -> Angle: %u deg | timeout\r\n", message.angleDeg);
+              (void)snprintf(line2,sizeof(line2),"DIST: TIMEOUT   ");
           }
           else{
-              length = snprintf(uartBuf, sizeof(uartBuf), "QUEUE -> Angle: %u deg | Distance: %u cm\r\n", message.angleDeg, message.distanceCm);
+              (void)snprintf(line2, sizeof(line2), "DIST:%3u cm     ", (unsigned int)message.distanceCm);
           }
 
-          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+          /* Update both LCD rows */
+          LCD_I2C_SetCursor(&lcd, 0U, 0U);
+
+          LCD_I2C_Print(&lcd, line1);
+
+          LCD_I2C_SetCursor(&lcd, 1U, 0U);
+
+          LCD_I2C_Print(&lcd, line2);
       }
   }
 
