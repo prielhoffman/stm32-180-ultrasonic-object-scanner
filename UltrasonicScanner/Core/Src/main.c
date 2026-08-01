@@ -67,10 +67,22 @@ const osThreadAttr_t DisplayTask_attributes = {
   .priority = (osPriority_t) osPriorityBelowNormal,
   .stack_size = 256 * 4
 };
+/* Definitions for AlertTask */
+osThreadId_t AlertTaskHandle;
+const osThreadAttr_t AlertTask_attributes = {
+  .name = "AlertTask",
+  .priority = (osPriority_t) osPriorityBelowNormal,
+  .stack_size = 256 * 4
+};
 /* Definitions for ScanDataQueue */
 osMessageQueueId_t ScanDataQueueHandle;
 const osMessageQueueAttr_t ScanDataQueue_attributes = {
   .name = "ScanDataQueue"
+};
+/* Definitions for AlertDataQueue */
+osMessageQueueId_t AlertDataQueueHandle;
+const osMessageQueueAttr_t AlertDataQueue_attributes = {
+  .name = "AlertDataQueue"
 };
 /* USER CODE BEGIN PV */
 LCD_I2C_HandleTypeDef lcd;
@@ -88,6 +100,7 @@ static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
 void StartScannerTask(void *argument);
 void StartDisplayTask(void *argument);
+void StartAlertTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -278,6 +291,9 @@ int main(void)
   /* creation of ScanDataQueue */
   ScanDataQueueHandle = osMessageQueueNew (4, sizeof(ScanMessage_t), &ScanDataQueue_attributes);
 
+  /* creation of AlertDataQueue */
+  AlertDataQueueHandle = osMessageQueueNew (4, sizeof(ScanMessage_t), &AlertDataQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -288,6 +304,9 @@ int main(void)
 
   /* creation of DisplayTask */
   DisplayTaskHandle = osThreadNew(StartDisplayTask, NULL, &DisplayTask_attributes);
+
+  /* creation of AlertTask */
+  AlertTaskHandle = osThreadNew(StartAlertTask, NULL, &AlertTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -655,8 +674,11 @@ void StartScannerTask(void *argument)
               message.measurementValid = 1U;
           }
 
-          /* Place one complete measurement in the queue */
-          osMessageQueuePut(ScanDataQueueHandle, &message, 0U, 0U);
+          /* Send an independent copy to DisplayTask */
+          (void)osMessageQueuePut(ScanDataQueueHandle, &message, 0U, 0U);
+
+          /* Send another independent copy to AlertTask */
+          (void)osMessageQueuePut(AlertDataQueueHandle, &message, 0U, 0U);
       }
 
       /* Calculate the next angle */
@@ -690,7 +712,8 @@ void StartScannerTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartDisplayTask */
-void StartDisplayTask(void *argument){
+void StartDisplayTask(void *argument)
+{
   /* USER CODE BEGIN StartDisplayTask */
 
   ScanMessage_t message;
@@ -733,6 +756,37 @@ void StartDisplayTask(void *argument){
   }
 
   /* USER CODE END StartDisplayTask */
+}
+
+/* USER CODE BEGIN Header_StartAlertTask */
+/**
+* @brief Function implementing the AlertTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartAlertTask */
+void StartAlertTask(void *argument){
+  /* USER CODE BEGIN StartAlertTask */
+
+  ScanMessage_t message;
+  char uartBuf[80];
+  int length;
+
+  for (;;){
+      /* Block until ScannerTask sends a measurement to the alert queue */
+      if (osMessageQueueGet(AlertDataQueueHandle, &message, NULL, osWaitForever) == osOK){
+          if (message.measurementValid == 0U){
+              length = snprintf(uartBuf, sizeof(uartBuf), "ALERT QUEUE -> Angle: %u deg | timeout\r\n", (unsigned int)message.angleDeg);
+          }
+          else{
+              length = snprintf(uartBuf, sizeof(uartBuf), "ALERT QUEUE -> Angle: %u deg | Distance: %u cm\r\n", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
+          }
+
+          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+      }
+  }
+
+  /* USER CODE END StartAlertTask */
 }
 
 /**
