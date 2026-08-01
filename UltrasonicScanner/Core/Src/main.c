@@ -805,39 +805,46 @@ void StartScannerTask(void *argument){
 * @retval None
 */
 /* USER CODE END Header_StartDisplayTask */
-void StartDisplayTask(void *argument)
-{
+void StartDisplayTask(void *argument){
   /* USER CODE BEGIN StartDisplayTask */
 
   ScanMessage_t message;
 
-  /*
-   * A 16x2 LCD displays 16 characters per row.
-   * The extra byte stores the terminating '\0'.
-   */
+  /* 16 visible characters plus the terminating '\0' */
   char line1[17];
   char line2[17];
 
-  /*
-   * Remove the old LCD test message once,
-   * when the display task begins.
-   */
   LCD_I2C_Clear(&lcd);
 
   for (;;){
-      /* Block this task until ScannerTask sends one complete measurement */
+      /* Sleep until ScannerTask sends a new system snapshot */
       if (osMessageQueueGet(ScanDataQueueHandle, &message, NULL, osWaitForever) == osOK){
-          /*Build exactly 16 visible characters */
-          (void)snprintf(line1, sizeof(line1), "SCAN A:%3u deg  ", (unsigned int)message.angleDeg);
+          if (message.state == SYSTEM_STATE_SCANNING){
+              /* Exactly 16 visible characters */
+              (void)snprintf(line1, sizeof(line1), "AREA CLEAR      ");
 
-          if (message.measurementValid == 0U){
-              (void)snprintf(line2,sizeof(line2),"DIST: TIMEOUT   ");
+              (void)snprintf(line2, sizeof(line2), "ANGLE:%3u deg   ", (unsigned int)message.angleDeg);
+          }
+          else if (message.state == SYSTEM_STATE_DETECTED){
+              (void)snprintf(line1, sizeof(line1), "OBJECT DETECTED ");
+
+              if (message.measurementValid != 0U){
+                  (void)snprintf(line2, sizeof(line2), "A:%3u D:%3ucm  ", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
+              }
+              else{
+                  (void)snprintf(line2, sizeof(line2), "A:%3u D:---cm  ", (unsigned int)message.angleDeg);
+              }
           }
           else{
-              (void)snprintf(line2, sizeof(line2), "DIST:%3u cm     ", (unsigned int)message.distanceCm);
+              (void)snprintf(line1, sizeof(line1), "SYSTEM ERROR    ");
+
+              (void)snprintf(line2, sizeof(line2), "CHECK HARDWARE  ");
           }
 
-          /* Update both LCD rows */
+          /*
+           * Overwrite both complete rows
+           * No Clear command is needed on every update, so the display should not flicker
+           */
           LCD_I2C_SetCursor(&lcd, 0U, 0U);
 
           LCD_I2C_Print(&lcd, line1);
@@ -862,20 +869,41 @@ void StartAlertTask(void *argument){
   /* USER CODE BEGIN StartAlertTask */
 
   ScanMessage_t message;
-  char uartBuf[80];
-  int length;
+
+  /* Start in a safe and quiet state. */
+  HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
+
+  HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
+
+  HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
 
   for (;;){
-      /* Block until ScannerTask sends a measurement to the alert queue */
+      /* Wait without consuming CPU time until ScannerTask sends a new system snapshot */
       if (osMessageQueueGet(AlertDataQueueHandle, &message, NULL, osWaitForever) == osOK){
-          if (message.measurementValid == 0U){
-              length = snprintf(uartBuf, sizeof(uartBuf), "ALERT QUEUE -> Angle: %u deg | timeout\r\n", (unsigned int)message.angleDeg);
+          if (message.state == SYSTEM_STATE_SCANNING){
+              HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_SET);
+
+              HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
+
+              /* The buzzer must always be silent while the scanner is clear */
+              HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+          }
+          else if (message.state == SYSTEM_STATE_DETECTED){
+              HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
+
+              HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_SET);
+
+              /* Buzzer behavior will be added separately after the LEDs are verified */
+              HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
           }
           else{
-              length = snprintf(uartBuf, sizeof(uartBuf), "ALERT QUEUE -> Angle: %u deg | Distance: %u cm\r\n", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
-          }
+              /* Safe output state for STARTUP or ERROR */
+              HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
 
-          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+              HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_RESET);
+
+              HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+          }
       }
   }
 
