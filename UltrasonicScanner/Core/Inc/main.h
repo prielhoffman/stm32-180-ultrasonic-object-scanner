@@ -69,6 +69,8 @@ void Error_Handler(void);
 #define LED_GREEN_GPIO_Port GPIOA
 #define TRIG_Pin GPIO_PIN_8
 #define TRIG_GPIO_Port GPIOA
+#define BUZZER_CTRL_Pin GPIO_PIN_9
+#define BUZZER_CTRL_GPIO_Port GPIOA
 #define LED_GREEN_EXT_Pin GPIO_PIN_10
 #define LED_GREEN_EXT_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
