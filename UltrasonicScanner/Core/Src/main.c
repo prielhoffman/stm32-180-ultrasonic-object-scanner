@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -48,6 +49,13 @@ TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
+/* Definitions for ScannerTask */
+osThreadId_t ScannerTaskHandle;
+const osThreadAttr_t ScannerTask_attributes = {
+  .name = "ScannerTask",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4
+};
 /* USER CODE BEGIN PV */
 LCD_I2C_HandleTypeDef lcd;
 
@@ -62,6 +70,8 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
+void StartScannerTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -232,61 +242,49 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of ScannerTask */
+  ScannerTaskHandle = osThreadNew(StartScannerTask, NULL, &ScannerTask_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+      /* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
-
-      /* Move the servo by one small step */
-      Servo_SetAngle((uint8_t)scanAngle);
-
-      /* Give the servo one PWM period to begin moving toward the requested angle */
-      HAL_Delay(20U);
-
-      /* Measure only every three degrees, the servo still moves in one-degree steps */
-      if ((scanAngle % 3) == 0){
-          uint32_t echoPulseUs;
-          uint32_t distanceCm;
-          char uartBuf[80];
-          int length;
-
-          echoPulseUs = HC_SR04_ReadEchoPulseUs();
-
-          if (echoPulseUs == 0U){
-              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | HC-SR04 timeout\r\n", (int)scanAngle);
-          }
-          else{
-              distanceCm = echoPulseUs / 58U;
-
-              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | Distance: %lu cm\r\n", (int)scanAngle, (unsigned long)distanceCm);
-          }
-
-          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U
-          );
-      }
-
-      /* Calculate the next angle without repeating the endpoint twice */
-      if (scanDirection > 0){
-          if (scanAngle >= 170){
-              scanDirection = -1;
-              scanAngle--;
-          }
-          else{
-              scanAngle++;
-          }
-      }
-      else{
-          if (scanAngle <= 10){
-              scanDirection = 1;
-              scanAngle++;
-          }
-          else{
-              scanAngle--;
-          }
-      }
+      /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -594,6 +592,69 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartScannerTask */
+/**
+  * @brief  Function implementing the ScannerTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartScannerTask */
+void StartScannerTask(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+
+  for (;;){
+      /* Move the servo by one small step */
+      Servo_SetAngle((uint8_t)scanAngle);
+
+      /* Suspend this task for 20 RTOS ticks. Since the tick rate is 1000 Hz, 20 ticks are approximately 20 ms */
+      osDelay(20U);
+
+      /* Measure only every three degrees. The servo still moves in one-degree steps */
+      if ((scanAngle % 3) == 0){
+          uint32_t echoPulseUs;
+          uint32_t distanceCm;
+          char uartBuf[80];
+          int length;
+
+          echoPulseUs = HC_SR04_ReadEchoPulseUs();
+
+          if (echoPulseUs == 0U){
+              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | HC-SR04 timeout\r\n", (int)scanAngle);
+          }
+          else{
+              distanceCm = echoPulseUs / 58U;
+
+              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | Distance: %lu cm\r\n", (int)scanAngle, (unsigned long)distanceCm);
+          }
+
+          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+      }
+
+      /* Calculate the next angle */
+      if (scanDirection > 0){
+          if (scanAngle >= 170){
+              scanDirection = -1;
+              scanAngle--;
+          }
+          else{
+              scanAngle++;
+          }
+      }
+      else{
+          if (scanAngle <= 10){
+              scanDirection = 1;
+              scanAngle++;
+          }
+          else{
+              scanAngle--;
+          }
+      }
+  }
+
+  /* USER CODE END 5 */
+}
 
 /**
   * @brief  Period elapsed callback in non blocking mode
