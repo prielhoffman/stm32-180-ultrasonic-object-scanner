@@ -28,7 +28,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct{
+    uint16_t angleDeg;
+    uint16_t distanceCm;
+    uint8_t measurementValid;
+} ScanMessage_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -56,6 +60,18 @@ const osThreadAttr_t ScannerTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 256 * 4
 };
+/* Definitions for DisplayTask */
+osThreadId_t DisplayTaskHandle;
+const osThreadAttr_t DisplayTask_attributes = {
+  .name = "DisplayTask",
+  .priority = (osPriority_t) osPriorityBelowNormal,
+  .stack_size = 256 * 4
+};
+/* Definitions for ScanDataQueue */
+osMessageQueueId_t ScanDataQueueHandle;
+const osMessageQueueAttr_t ScanDataQueue_attributes = {
+  .name = "ScanDataQueue"
+};
 /* USER CODE BEGIN PV */
 LCD_I2C_HandleTypeDef lcd;
 
@@ -71,6 +87,7 @@ static void MX_TIM3_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
 void StartScannerTask(void *argument);
+void StartDisplayTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -257,6 +274,10 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* creation of ScanDataQueue */
+  ScanDataQueueHandle = osMessageQueueNew (4, sizeof(ScanMessage_t), &ScanDataQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -264,6 +285,9 @@ int main(void)
   /* Create the thread(s) */
   /* creation of ScannerTask */
   ScannerTaskHandle = osThreadNew(StartScannerTask, NULL, &ScannerTask_attributes);
+
+  /* creation of DisplayTask */
+  DisplayTaskHandle = osThreadNew(StartDisplayTask, NULL, &DisplayTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -282,9 +306,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-      /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -614,22 +638,25 @@ void StartScannerTask(void *argument)
       /* Measure only every three degrees. The servo still moves in one-degree steps */
       if ((scanAngle % 3) == 0){
           uint32_t echoPulseUs;
-          uint32_t distanceCm;
-          char uartBuf[80];
-          int length;
+          ScanMessage_t message;
 
           echoPulseUs = HC_SR04_ReadEchoPulseUs();
 
+          /* All fields belong to the same measurement */
+          message.angleDeg = (uint16_t)scanAngle;
+
           if (echoPulseUs == 0U){
-              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | HC-SR04 timeout\r\n", (int)scanAngle);
+              message.distanceCm = 0U;
+              message.measurementValid = 0U;
           }
           else{
-              distanceCm = echoPulseUs / 58U;
+              message.distanceCm = (uint16_t)(echoPulseUs / 58U);
 
-              length = snprintf(uartBuf, sizeof(uartBuf), "Angle: %d deg | Distance: %lu cm\r\n", (int)scanAngle, (unsigned long)distanceCm);
+              message.measurementValid = 1U;
           }
 
-          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+          /* Place one complete measurement in the queue */
+          osMessageQueuePut(ScanDataQueueHandle, &message, 0U, 0U);
       }
 
       /* Calculate the next angle */
@@ -654,6 +681,37 @@ void StartScannerTask(void *argument)
   }
 
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartDisplayTask */
+/**
+* @brief Function implementing the DisplayTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartDisplayTask */
+void StartDisplayTask(void *argument){
+  /* USER CODE BEGIN StartDisplayTask */
+
+  ScanMessage_t message;
+  char uartBuf[80];
+  int length;
+
+  for (;;){
+      /* Wait here until ScannerTask places a measurement in the queue */
+      if (osMessageQueueGet(ScanDataQueueHandle, &message, NULL, osWaitForever) == osOK){
+          if (message.measurementValid == 0U){
+              length = snprintf(uartBuf, sizeof(uartBuf), "QUEUE -> Angle: %u deg | timeout\r\n", message.angleDeg);
+          }
+          else{
+              length = snprintf(uartBuf, sizeof(uartBuf), "QUEUE -> Angle: %u deg | Distance: %u cm\r\n", message.angleDeg, message.distanceCm);
+          }
+
+          HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
+      }
+  }
+
+  /* USER CODE END StartDisplayTask */
 }
 
 /**
