@@ -235,6 +235,32 @@ static uint32_t Alert_GetBuzzerGapTicks(uint16_t distanceCm){
     return BUZZER_GAP_FAR_TICKS;
 }
 
+static void Application_RtosStartupError(void){
+    /*
+     * Keep the system in a visible and safe state
+     * The scheduler has not started yet, so no task can change these outputs
+     */
+    Servo_SetAngle(90U);
+
+    HAL_GPIO_WritePin(LED_GREEN_EXT_GPIO_Port, LED_GREEN_EXT_Pin, GPIO_PIN_RESET);
+
+    HAL_GPIO_WritePin(LED_RED_EXT_GPIO_Port, LED_RED_EXT_Pin, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(BUZZER_CTRL_GPIO_Port, BUZZER_CTRL_Pin, GPIO_PIN_RESET);
+
+    LCD_I2C_Clear(&lcd);
+
+    LCD_I2C_SetCursor(&lcd, 0U, 0U);
+    LCD_I2C_Print(&lcd, "SYSTEM ERROR    ");
+
+    LCD_I2C_SetCursor(&lcd, 1U, 0U);
+    LCD_I2C_Print(&lcd, "RTOS STARTUP    ");
+
+    /* Stop here instead of starting a partially initialized system */
+    for (;;){
+        HAL_Delay(1000U);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -315,7 +341,9 @@ int main(void)
   AlertDataQueueHandle = osMessageQueueNew (4, sizeof(ScanMessage_t), &AlertDataQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  if ((ScanDataQueueHandle == NULL) || (AlertDataQueueHandle == NULL)){
+      Application_RtosStartupError();
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -329,7 +357,9 @@ int main(void)
   AlertTaskHandle = osThreadNew(StartAlertTask, NULL, &AlertTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  if ((ScannerTaskHandle == NULL) || (DisplayTaskHandle == NULL) || (AlertTaskHandle == NULL)){
+      Application_RtosStartupError();
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
