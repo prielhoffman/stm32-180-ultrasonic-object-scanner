@@ -693,7 +693,8 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartScannerTask */
-void StartScannerTask(void *argument){
+void StartScannerTask(void *argument)
+{
   /* USER CODE BEGIN 5 */
   for (;;){
       ScanMessage_t message;
@@ -815,7 +816,8 @@ void StartScannerTask(void *argument){
 * @retval None
 */
 /* USER CODE END Header_StartDisplayTask */
-void StartDisplayTask(void *argument){
+void StartDisplayTask(void *argument)
+{
   /* USER CODE BEGIN StartDisplayTask */
 
   ScanMessage_t message;
