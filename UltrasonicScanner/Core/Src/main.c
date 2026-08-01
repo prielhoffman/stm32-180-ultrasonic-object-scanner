@@ -137,40 +137,6 @@ void StartAlertTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-static void I2C_Scan(void){
-    char uartBuf[64];
-    uint8_t devicesFound = 0U;
-
-    const char startMessage[] = "\r\nStarting I2C scan...\r\n";
-
-    HAL_UART_Transmit(&huart2, (uint8_t *)startMessage, sizeof(startMessage) - 1U, 100U);
-
-    for (uint8_t address = 1U; address < 128U; address++){
-        /* STM32 HAL expects the 7-bit I2C address shifted left by one bit */
-        HAL_StatusTypeDef status = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(address << 1U), 2U, 10U);
-
-        if (status == HAL_OK){
-            int length = snprintf(uartBuf, sizeof(uartBuf), "I2C device found at 0x%02X\r\n", address);
-
-            HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
-
-            devicesFound++;
-        }
-    }
-
-    if (devicesFound == 0U){
-        const char noDeviceMessage[] = "No I2C devices found\r\n";
-
-        HAL_UART_Transmit(&huart2, (uint8_t *)noDeviceMessage, sizeof(noDeviceMessage) - 1U, 100U);
-    }
-    else{
-        int length = snprintf(uartBuf, sizeof(uartBuf), "Scan complete: %u device(s) found\r\n", devicesFound);
-
-        HAL_UART_Transmit(&huart2, (uint8_t *)uartBuf, (uint16_t)length, 100U);
-    }
-}
-
 static void DelayUs(uint16_t delayUs){
     /* Start counting again from zero */
     __HAL_TIM_SET_COUNTER(&htim2, 0U);
@@ -312,24 +278,17 @@ int main(void)
   HAL_TIM_Base_Start(&htim2);
 
   HAL_Delay(100U);
-  I2C_Scan();
 
   LCD_I2C_Init(&lcd, &hi2c1, 0x27U);
-  LCD_I2C_SetCursor(&lcd, 0U, 0U);
-
-  LCD_I2C_Print(&lcd, "LCD READY");
-
-  LCD_I2C_SetCursor(&lcd, 1U, 0U);
-
-  LCD_I2C_Print(&lcd, "I2C 0x27");
-
-  HAL_Delay(2000U);
-
   LCD_I2C_Clear(&lcd);
 
   LCD_I2C_SetCursor(&lcd, 0U, 0U);
+  LCD_I2C_Print(&lcd, "SYSTEM STARTING ");
 
-  LCD_I2C_Print(&lcd, "LCD TEST PASSED");
+  LCD_I2C_SetCursor(&lcd, 1U, 0U);
+  LCD_I2C_Print(&lcd, "PLEASE WAIT...  ");
+
+  HAL_Delay(1000U);
 
   /* USER CODE END 2 */
 
@@ -848,7 +807,7 @@ void StartDisplayTask(void *argument){
               (void)snprintf(line2, sizeof(line2), "ANGLE:%3u deg   ", (unsigned int)message.angleDeg);
           }
           else if (message.state == SYSTEM_STATE_DETECTED){
-              (void)snprintf(line1, sizeof(line1), "OBJECT DETECTED ");
+              (void)snprintf(line1, sizeof(line1), "FOREIGN BODY     ");
 
               if (message.measurementValid != 0U){
                   (void)snprintf(line2, sizeof(line2), "A:%3u D:%3ucm  ", (unsigned int)message.angleDeg, (unsigned int)message.distanceCm);
