@@ -28,7 +28,15 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum{
+    SYSTEM_STATE_STARTUP = 0,
+    SYSTEM_STATE_SCANNING,
+    SYSTEM_STATE_DETECTED,
+    SYSTEM_STATE_ERROR
+} SystemState_t;
+
 typedef struct{
+	SystemState_t state;
     uint16_t angleDeg;
     uint16_t distanceCm;
     uint8_t measurementValid;
@@ -37,7 +45,13 @@ typedef struct{
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define HC_SR04_TIMEOUT_US    30000U
+#define HC_SR04_TIMEOUT_US           30000U
+
+#define OBJECT_DETECT_DISTANCE_CM    25U
+#define OBJECT_RELEASE_DISTANCE_CM   30U
+
+#define DETECT_CONFIRM_SAMPLES        2U
+#define RELEASE_CONFIRM_SAMPLES       3U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -89,6 +103,11 @@ LCD_I2C_HandleTypeDef lcd;
 
 static int16_t scanAngle = 90;
 static int8_t scanDirection = 1;
+
+static SystemState_t systemState = SYSTEM_STATE_SCANNING;
+
+static uint8_t detectConfirmCount = 0U;
+static uint8_t releaseConfirmCount = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -207,6 +226,26 @@ static void Servo_SetAngle(uint8_t angle){
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulseUs);
 }
 
+static void Scanner_AdvanceAngle(void){
+    if (scanDirection > 0){
+        if (scanAngle >= 170){
+            scanDirection = -1;
+            scanAngle--;
+        }
+        else{
+            scanAngle++;
+        }
+    }
+    else{
+        if (scanAngle <= 10){
+            scanDirection = 1;
+            scanAngle++;
+        }
+        else{
+            scanAngle--;
+        }
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -643,62 +682,116 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartScannerTask */
-void StartScannerTask(void *argument)
-{
+void StartScannerTask(void *argument){
   /* USER CODE BEGIN 5 */
 
   for (;;){
-      /* Move the servo by one small step */
-      Servo_SetAngle((uint8_t)scanAngle);
+      ScanMessage_t message;
+      uint32_t echoPulseUs;
 
-      /* Suspend this task for 20 RTOS ticks. Since the tick rate is 1000 Hz, 20 ticks are approximately 20 ms */
-      osDelay(20U);
+      /* SCANNING: Move smoothly and measure every three degrees */
+      if (systemState == SYSTEM_STATE_SCANNING){
+          Servo_SetAngle((uint8_t)scanAngle);
+          osDelay(20U);
 
-      /* Measure only every three degrees. The servo still moves in one-degree steps */
-      if ((scanAngle % 3) == 0){
-          uint32_t echoPulseUs;
-          ScanMessage_t message;
+          /* At angles that are not measurement points, simply continue the sweep */
+          if ((scanAngle % 3) != 0){
+              Scanner_AdvanceAngle();
+              continue;
+          }
 
           echoPulseUs = HC_SR04_ReadEchoPulseUs();
 
-          /* All fields belong to the same measurement */
           message.angleDeg = (uint16_t)scanAngle;
 
           if (echoPulseUs == 0U){
               message.distanceCm = 0U;
               message.measurementValid = 0U;
+
+              /* A timeout cannot confirm an object */
+              detectConfirmCount = 0U;
           }
           else{
               message.distanceCm = (uint16_t)(echoPulseUs / 58U);
 
               message.measurementValid = 1U;
+
+              if (message.distanceCm <= OBJECT_DETECT_DISTANCE_CM){
+                  detectConfirmCount++;
+
+                  /* Stay at this angle while waiting for the confirming measurement */
+                  if (detectConfirmCount >= DETECT_CONFIRM_SAMPLES){
+                      systemState = SYSTEM_STATE_DETECTED;
+
+                      detectConfirmCount = 0U;
+                      releaseConfirmCount = 0U;
+                  }
+              }
+              else{
+                  detectConfirmCount = 0U;
+              }
           }
 
-          /* Send an independent copy to DisplayTask */
+          message.state = systemState;
+
           (void)osMessageQueuePut(ScanDataQueueHandle, &message, 0U, 0U);
 
-          /* Send another independent copy to AlertTask */
+          (void)osMessageQueuePut(AlertDataQueueHandle, &message, 0U, 0U);
+
+          /* Continue moving only when no possible object is waiting for confirmation */
+          if ((systemState == SYSTEM_STATE_SCANNING) && (detectConfirmCount == 0U)){
+              Scanner_AdvanceAngle();
+          }
+      }
+
+      /* DETECTED: Keep commanding the same servo angle and continue measuring the object */
+      else if (systemState == SYSTEM_STATE_DETECTED){
+          Servo_SetAngle((uint8_t)scanAngle);
+
+          /* Measurements while holding the object do not need to run every 20 ms */
+          osDelay(100U);
+
+          echoPulseUs = HC_SR04_ReadEchoPulseUs();
+
+          message.angleDeg = (uint16_t)scanAngle;
+
+          if (echoPulseUs == 0U){
+              message.distanceCm = 0U;
+              message.measurementValid = 0U;
+
+              /* A timeout may mean that the object is no longer in front of the sensor */
+              releaseConfirmCount++;
+          }
+          else{
+              message.distanceCm = (uint16_t)(echoPulseUs / 58U);
+
+              message.measurementValid = 1U;
+
+              if (message.distanceCm >= OBJECT_RELEASE_DISTANCE_CM){
+                  releaseConfirmCount++;
+              }
+              else{
+                  releaseConfirmCount = 0U;
+              }
+          }
+
+          if (releaseConfirmCount >= RELEASE_CONFIRM_SAMPLES){
+              systemState = SYSTEM_STATE_SCANNING;
+
+              releaseConfirmCount = 0U;
+              detectConfirmCount = 0U;
+          }
+
+          message.state = systemState;
+
+          (void)osMessageQueuePut(ScanDataQueueHandle, &message, 0U, 0U);
+
           (void)osMessageQueuePut(AlertDataQueueHandle, &message, 0U, 0U);
       }
 
-      /* Calculate the next angle */
-      if (scanDirection > 0){
-          if (scanAngle >= 170){
-              scanDirection = -1;
-              scanAngle--;
-          }
-          else{
-              scanAngle++;
-          }
-      }
+      /* ERROR is not implemented yet */
       else{
-          if (scanAngle <= 10){
-              scanDirection = 1;
-              scanAngle++;
-          }
-          else{
-              scanAngle--;
-          }
+          osDelay(100U);
       }
   }
 
