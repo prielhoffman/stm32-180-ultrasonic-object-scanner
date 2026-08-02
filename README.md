@@ -4,17 +4,15 @@ A real-time embedded object-scanning system built with an **STM32G071RB**, **Fre
 
 The system continuously scans its surroundings, measures distance at different angles, stops at the angle where an object is detected, and provides live visual and audible feedback. When the object is removed, the system automatically returns to scanning.
 
-## Demo
+## System Architecture Overview
 
-> Add the project video or GIF here.
+The diagram below summarizes the complete system in one view: the hardware connections to the STM32, the FreeRTOS task and queue architecture, and the transitions between the main operating states.
 
-The demo shows:
+![STM32 Ultrasonic Scanner Architecture](docs/stm32-ultrasonic-scanner-architecture.png)
 
-- system startup and continuous scanning;
-- object detection and servo hold at the detection angle;
-- live angle and distance updates on the LCD;
-- distance-dependent buzzer cadence;
-- automatic return to scanning after the area is cleared.
+- The hardware section shows how the servo, ultrasonic sensor, LCD, LEDs, buzzer, and UART are connected to the STM32.
+- The FreeRTOS section shows how `ScannerTask` publishes complete measurement snapshots to separate queues for `DisplayTask` and `AlertTask`.
+- The state-machine section shows the transition from `SCANNING` to `DETECTED`, the hysteresis used to prevent rapid toggling, and the safe `SYSTEM_ERROR` state.
 
 ## System Behavior
 
@@ -197,17 +195,3 @@ Core/
 
 UltrasonicScanner.ioc
 ```
-
-## Possible Future Improvements
-
-- Replace ECHO polling with timer input capture and interrupts.
-- Add distance filtering or averaging for noisier environments.
-- Add runtime sensor-fault detection to the `SYSTEM_ERROR` state.
-- Calibrate the servo angle and ultrasonic distance more precisely.
-- Move application logic from `main.c` into dedicated modules.
-
-## Author
-
-**Priel Hoffman**
-
-Communication Systems Engineering graduate focused on Embedded Software, Firmware, Low-Level C/C++, and real-time systems.
